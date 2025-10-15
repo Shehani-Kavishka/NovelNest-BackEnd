@@ -16,13 +16,13 @@ exports.handler = onCall(async (request) => {
   const uid = request.auth.uid;
 
   // 2. Get data from the frontend
-  const { title, description, genre, tags } = request.data;
+const { storyTitle, description, genre, tags } = request.data;
 
   // 3. Validate the input
-  if (!title || !description || !genre) {
+  if (!storyTitle || !description || !genre) {
     throw new HttpsError(
       "invalid-argument",
-      "Title, description, and genre are required.",
+      "Story title, description, and genre are required.",
     );
   }
 
@@ -32,32 +32,32 @@ exports.handler = onCall(async (request) => {
     const authorName = userRecord.displayName || "Unknown Author";
 
     // 5. Create a new document in the 'novels' collection
-    const newNovelRef = db.collection("novels").doc(); // Let Firestore generate a unique ID
+ const newStoryRef = db.collection("stories").doc(); // Let Firestore generate a unique ID
 
-    const newNovelData = {
-      novelId: newNovelRef.id,
-      title: title,
+ const newStoryData = {
+      storyId: newStoryRef.id, // Field name from schema
+      storyTitle: storyTitle, // Field name from schema
       description: description,
-      coverImageUrl: "", // Will be updated later after image upload
-      status: "draft", // The story starts as a draft
+      storyCoverImageUrl: "", // Field name from schema (will be updated by another function)
+      status: "draft",
       genre: genre,
-      tags: tags || [], // Use the provided tags or an empty array
-      publishedDate: null, // Not published yet
-      lastUpdated: FieldValue.serverTimestamp(), // Set current server time
-      authorId: uid,
-      authorName: authorName,
+      tags: tags || [],
+      publishedAt: null, // Field name from schema
+      lastUpdatedAt: FieldValue.serverTimestamp(), // Field name from schema
+      authorId: uid, // Field name from schema
+      author: authorName, // Field name from schema
       readCount: 0,
-      ratingCount: 0,
+      rateCount: 0, // Field name from schema
       commentCount: 0,
     };
 
-    // 6. Save the new novel document to Firestore
-    await newNovelRef.set(newNovelData);
+    // 6. Save the new story document to Firestore
+    await newStoryRef.set(newStoryData);
 
-    // 7. Return the ID of the new novel to the frontend
+    // 7. Return the ID of the new story to the frontend
     // This is important so the app knows which story to add chapters to
     return {
-      novelId: newNovelRef.id,
+      storyId: newStoryRef.id,
       message: "Story draft created successfully.",
     };
   } catch (error) {

@@ -14,67 +14,78 @@ exports.handler = onCall(async (request) => {
   const uid = request.auth.uid;
 
   // 2. Get data from the frontend
-  const { novelId, title, content } = request.data;
+   const { storyId, chapterTitle, chapterContent, status } = request.data;
 
   // 3. Validate input
-  if (!novelId || !title || !content) {
+  if (!storyId || !chapterTitle || !chapterContent || !status) {
     throw new HttpsError(
       "invalid-argument",
-      "Novel ID, title, and content are required.",
+      "Story ID, chapter title, chapter content, and status are required.",
     );
+  }
+  if (status !== 'published' && status !== 'draft') {
+      throw new HttpsError("invalid-argument", "Status must be either 'published' or 'draft'.");
   }
 
   try {
-    const novelRef = db.collection("novels").doc(novelId);
-    const novelDoc = await novelRef.get();
-
-    // 4. Verify that the novel exists and the user is the author
-    if (!novelDoc.exists) {
-      throw new HttpsError("not-found", "The specified novel does not exist.");
+    const storyRef = db.collection("stories").doc(storyId);
+     return await db.runTransaction(async (transaction) => {
+      const storyDoc = await transaction.get(storyRef);
+    // 4. Verify that the story exists and the user is the author
+    if (!storyDoc.exists) {
+      throw new HttpsError("not-found", "The specified story does not exist.");
     }
-    if (novelDoc.data().authorId !== uid) {
+    if (storyDoc.data().authorId !== uid) {
       throw new HttpsError(
         "permission-denied",
-        "You are not the author of this novel.",
+        "You are not the author of this story.",
       );
     }
 
-    // --- Transaction to safely get the next chapter number ---
-    const newChapterRef = await db.runTransaction(async (transaction) => {
-      const chaptersSubcollectionRef = novelRef.collection("Chapters");
-      
-      // Get the current count of chapters to determine the new chapter number
-      const chaptersSnapshot = await transaction.get(chaptersSubcollectionRef);
-      const newChapterNumber = chaptersSnapshot.size + 1;
+    // Get the next chapter number from the chapter-count sub-collection for accuracy
+      const chapterCountRef = storyRef.collection("chapter-count").doc("counts");
+      const chapterCountDoc = await transaction.get(chapterCountRef);
+      let draftsCount = 0;
+      let publishedCount = 0;
+      if (chapterCountDoc.exists) {
+          draftsCount = chapterCountDoc.data().drafts || 0;
+          publishedCount = chapterCountDoc.data().published || 0;
+      }
+      const newChapterNumber = draftsCount + publishedCount + 1;
 
-      // Create a new chapter document reference
-      const chapterRef = chaptersSubcollectionRef.doc(); // Auto-generate chapterId
+
+      const chapterRef = storyRef.collection("chapters").doc();
       
       const newChapterData = {
         chapterId: chapterRef.id,
-        chapterTitle: title,
-        chapterNumber: newChapterNumber,
-        chapterContent: content,
-        status: "draft", // New chapters are always drafts first
-        publishedDate: null,
+        chapterTitle: chapterTitle,
+        chapterNo: newChapterNumber,
+        chapterContent: chapterContent,
+        chapterStatus: status,
+        publishedAt: status === 'published' ? FieldValue.serverTimestamp() : null,
         readCount: 0,
         commentCount: 0,
         rateCount: 0,
       };
 
       transaction.set(chapterRef, newChapterData);
-      
-      // Also update the lastUpdated timestamp on the parent novel
-      transaction.update(novelRef, { lastUpdated: FieldValue.serverTimestamp() });
 
-      return chapterRef;
+      // Also update the lastUpdated timestamp on the parent story
+      transaction.update(storyRef, { lastUpdated: FieldValue.serverTimestamp() });
+
+      if (status === 'published') {
+        transaction.set(chapterCountRef, { published: FieldValue.increment(1) }, { merge: true });
+      }
+      else
+      {
+        transaction.set(chapterCountRef, { drafts: FieldValue.increment(1) }, { merge: true });
+      }
+      return {
+        chapterId: chapterRef.id,
+        message: `Chapter added successfully as ${status}.`,
+      };
     });
 
-    // 6. Return the ID of the new chapter
-    return {
-      chapterId: newChapterRef.id,
-      message: "Chapter draft saved successfully.",
-    };
   } catch (error) {
     console.error("Error adding chapter:", error);
     if (error instanceof HttpsError) throw error;
